@@ -1,6 +1,11 @@
 package com.jp.ray.videostreamer
 
 import android.Manifest
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageFormat
+import android.graphics.Rect
+import android.graphics.YuvImage
 import android.os.Bundle
 import android.util.Log
 import android.view.View
@@ -24,6 +29,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -32,18 +38,23 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.PermissionState
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
 import com.jp.ray.videostreamer.ui.theme.VideoStreamerTheme
+import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
@@ -51,10 +62,15 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
+            val socketViewModel:SocketViewModel = viewModel()
+            val uiState by socketViewModel.uiState.collectAsState()
             VideoStreamerTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { padding ->
-                    //MainCamera()
-                    SocketUI(paddingValues = padding)
+                    if (!uiState.connected) {
+                        SocketUI(paddingValues = padding, socketViewModel = socketViewModel)
+                    } else {
+                        MainCamera(socketViewModel)
+                    }
                 }
             }
         }
@@ -64,11 +80,11 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
-fun MainCamera() {
+fun MainCamera(socketViewModel: SocketViewModel) {
     val permissionState: PermissionState = rememberPermissionState(permission = Manifest.permission.CAMERA)
 
     if(permissionState.status.isGranted){
-        CameraStart()
+        CameraStart(socketViewModel)
     }else{
         NoPermission(onRequestPermission = permissionState::launchPermissionRequest)
     }
@@ -109,7 +125,7 @@ private fun buildImageAnalysis(previewView: View): ImageAnalysis {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CameraStart(){
+fun CameraStart(socketViewModel: SocketViewModel){
     val context = LocalContext.current
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     
@@ -131,7 +147,7 @@ fun CameraStart(){
 
         val preview = Preview.Builder().build()
         val analyzer = ImageAnalysis.Builder().build().also {
-            it.setAnalyzer(executor,LuminosityAnalyzer())
+            it.setAnalyzer(executor,LuminosityAnalyzer(socketViewModel))
         }
 
         val cameraSelector = CameraSelector.Builder()
@@ -150,15 +166,15 @@ fun CameraStart(){
         }
     }
     Scaffold(floatingActionButton = {
-        FloatingActionButton(onClick = { }) {
-            Icon(imageVector = Icons.Default.Add, contentDescription = "Clothesadd")
+        FloatingActionButton(onClick = {socketViewModel.closeSocket() }) {
+            Icon(imageVector = Icons.Default.Close, contentDescription = "Clothesadd")
         }
     }) {paddingValues: PaddingValues ->
         AndroidView(factory = {previewView},
             modifier = Modifier.padding(paddingValues))
     }
 }
-private class LuminosityAnalyzer() : ImageAnalysis.Analyzer {
+private class LuminosityAnalyzer(private val socketViewModel: SocketViewModel) : ImageAnalysis.Analyzer {
 
     private fun ByteBuffer.toByteArray(): ByteArray {
         rewind()    // Rewind the buffer to zero
@@ -168,11 +184,33 @@ private class LuminosityAnalyzer() : ImageAnalysis.Analyzer {
     }
 
     override fun analyze(image: ImageProxy) {
-        val buffer = image.planes[0].buffer
-        val data = buffer.toByteArray()
-        val pixels = data.map { it.toInt() and 0xFF }
-        val luma = pixels.average()
+        val width = image.width
+        val height = image.height
 
+        // ImageProxyをBitmapに変換
+        val bitmap = image.toBitmap()
+
+        // Bitmapをバイト配列に変換 (PNG形式で圧縮)
+        val outputStream = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
+        outputStream.flush()
+        val bitmapBytes = outputStream.toByteArray()
+
+        // メッセージとして送信
+        val message = buildMessage(width, height, bitmapBytes)
+        socketViewModel.sendMessage(message)
+        // ImageProxyを閉じる
         image.close()
+    }
+
+
+    // 高さ、幅、ビットマップを結合したバイト配列を作成
+    private fun buildMessage(width: Int, height: Int, bitmapBytes: ByteArray): ByteArray {
+        println(bitmapBytes.size)
+        return width.toBytes()+height.toBytes()+bitmapBytes.size.toBytes() + bitmapBytes // ヘッダとビットマップバイト配列を結合
+    }
+
+    private fun Int.toBytes():ByteArray {
+        return ByteBuffer.allocate(Int.SIZE_BYTES).order(ByteOrder.BIG_ENDIAN).putInt(this).array()
     }
 }

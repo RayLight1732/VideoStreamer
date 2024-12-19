@@ -23,14 +23,17 @@ import com.google.accompanist.permissions.PermissionState
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.util.concurrent.LinkedBlockingQueue
 
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
@@ -58,14 +61,6 @@ fun SocketUI(paddingValues: PaddingValues, socketViewModel: SocketViewModel = vi
         Button(onClick = { socketViewModel.createSocket() }, enabled = !uiState.connected) {
             Text(text = "Create Socket")
         }
-        TextFieldWithPlaceholder(
-            value = uiState.message,
-            onValueChange = socketViewModel::updateMessage,
-            placeholder = "Message"
-        )
-        Button(onClick = { socketViewModel.sendMessage() }, enabled = uiState.connected) {
-            Text(text = "Send Message")
-        }
         Button(onClick = { socketViewModel.closeSocket() }, enabled = uiState.connected) {
             Text(text = "Close Socket")
         }
@@ -92,8 +87,7 @@ fun TextFieldWithPlaceholder(
 
 data class SocketUIState(
     val host: String = "",
-    val port: String = "",
-    val message: String = "",
+    val port: String = "1",
     val errorMessage: String = "",
     val connected: Boolean = false
 )
@@ -105,6 +99,9 @@ class SocketViewModel : ViewModel() {
     private var socket: Socket? = null
     private var outputStream: OutputStream? = null
 
+    private val blockingQueue = LinkedBlockingQueue<ByteArray>()
+    private var senderJob: Job? = null
+
     fun updateHost(host: String) {
         _uiState.update { it.copy(host = host) }
     }
@@ -113,49 +110,69 @@ class SocketViewModel : ViewModel() {
         _uiState.update { it.copy(port = port) }
     }
 
-    fun updateMessage(message: String) {
-        _uiState.update { it.copy(message = message) }
-    }
 
     fun createSocket() {
+        if (senderJob != null) return
         viewModelScope.launch(Dispatchers.IO) {
             executeSafely {
-                if (_uiState.value.port.isNotEmpty()) {
-                    val host = _uiState.value.host
-                    val port = _uiState.value.port.toInt()
-                    println("create")
-                    val newSocket = Socket()
-                    newSocket.connect(InetSocketAddress(host,port),5000)
-                    println("complete")
-                    socket = newSocket
-                    outputStream = newSocket.getOutputStream()
-                    _uiState.update { it.copy(connected = true, errorMessage = "") }
+                _uiState.update { it.copy(errorMessage = "") }
+                val host = _uiState.value.host
+                val port = _uiState.value.port.toIntOrNull() ?: throw IllegalArgumentException("Invalid port")
+
+                socket = Socket().apply {
+                    connect(InetSocketAddress(host, port), 5000)
+                    this@SocketViewModel.outputStream = getOutputStream()
+                }
+                _uiState.update { it.copy(connected = true, errorMessage = "") }
+
+                senderJob = launchSenderJob()
+            }
+        }
+    }
+
+    private fun launchSenderJob(): Job {
+        return viewModelScope.launch(Dispatchers.IO) {
+            executeSafely {
+                while (true) {
+                    val item = blockingQueue.take()
+                    if (item.isEmpty()) {
+                        break
+                    }
+                    try {
+                        outputStream?.apply {
+                            write(item)
+                            flush()
+                        } ?: closeSocket()
+                    } catch (e: Exception) {
+                        closeSocket()
+                        break
+                    }
+
                 }
             }
         }
     }
 
-    fun sendMessage() {
-        viewModelScope.launch(Dispatchers.IO) {
-            executeSafely {
-                outputStream?.apply {
-                    val message = _uiState.value.message
-                    write(message.toByteArray())
-                    flush()
-                }
-            }
-        }
+    fun sendMessage(message: ByteArray) {
+        senderJob?.let { blockingQueue.add(message) }
     }
 
     fun closeSocket() {
-        viewModelScope.launch(Dispatchers.IO) {
-            executeSafely {
-                socket?.close()
-                socket = null
-                outputStream = null
-                _uiState.update { it.copy(connected = false, errorMessage = "") }
-            }
+        senderJob?.let {
+            _uiState.update { it.copy(errorMessage = "") }
+            blockingQueue.clear()
+            blockingQueue.put(ByteArray(0))//to stop the thread
+            viewModelScope.launch(Dispatchers.IO) {
+                it.join()
+                executeSafely {
+                    socket?.close()
+                    socket = null
+                    outputStream = null
+                    _uiState.update { it.copy(connected = false, errorMessage = "") }
+                }
+            }.invokeOnCompletion { senderJob = null }
         }
+
     }
 
     private fun executeSafely(action: () -> Unit) {
@@ -163,17 +180,14 @@ class SocketViewModel : ViewModel() {
             action()
         } catch (e: Exception) {
             e.printStackTrace()
-            println("error:${e.message.orEmpty()}")
-            _uiState.update { it.copy(errorMessage = e.message.orEmpty()) }
+            val errorMessage = "error:${e.javaClass.name} \nmessage:${e.message.orEmpty()}"
+            println(errorMessage)
+            _uiState.update { it.copy(errorMessage = errorMessage) }
         }
     }
 
     override fun onCleared() {
-        try {
-            socket?.close()
-
-        } catch (ignore: Exception) {
-        }
+        closeSocket()
         viewModelScope.cancel()
     }
 }
