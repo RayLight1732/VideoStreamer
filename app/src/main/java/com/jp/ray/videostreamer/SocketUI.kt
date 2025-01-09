@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -85,6 +86,7 @@ fun TextFieldWithPlaceholder(
     )
 }
 
+
 data class SocketUIState(
     val host: String = "",
     val port: String = "1",
@@ -98,9 +100,12 @@ class SocketViewModel : ViewModel() {
 
     private var socket: Socket? = null
     private var outputStream: OutputStream? = null
+    private var inputStream: InputStream? = null
 
     private val blockingQueue = LinkedBlockingQueue<ByteArray>()
     private var senderJob: Job? = null
+
+    private var readerJob: Job? = null
 
     fun updateHost(host: String) {
         _uiState.update { it.copy(host = host) }
@@ -111,8 +116,8 @@ class SocketViewModel : ViewModel() {
     }
 
 
-    fun createSocket() {
-        if (senderJob != null) return
+    fun createSocket():Boolean {
+        if (senderJob != null) return false
         viewModelScope.launch(Dispatchers.IO) {
             executeSafely {
                 _uiState.update { it.copy(errorMessage = "") }
@@ -122,12 +127,15 @@ class SocketViewModel : ViewModel() {
                 socket = Socket().apply {
                     connect(InetSocketAddress(host, port), 5000)
                     this@SocketViewModel.outputStream = getOutputStream()
+                    this@SocketViewModel.inputStream = getInputStream()
                 }
-                _uiState.update { it.copy(connected = true, errorMessage = "") }
+                _uiState.update { it.copy(connected = true) }
 
                 senderJob = launchSenderJob()
+                readerJob = launchReaderJob()
             }
         }
+        return true
     }
 
     private fun launchSenderJob(): Job {
@@ -139,15 +147,25 @@ class SocketViewModel : ViewModel() {
                         break
                     }
                     try {
-                        outputStream?.apply {
+                        outputStream!!.apply {
                             write(item)
                             flush()
-                        } ?: closeSocket()
+                        }
                     } catch (e: Exception) {
                         closeSocket()
                         break
                     }
 
+                }
+            }
+        }
+    }
+
+    private fun launchReaderJob(): Job {
+        return viewModelScope.launch(Dispatchers.IO) {
+            executeSafely {
+                while (true) {
+                    inputStream!!.read()
                 }
             }
         }
@@ -159,17 +177,19 @@ class SocketViewModel : ViewModel() {
 
     fun closeSocket() {
         senderJob?.let {
+            job->
             _uiState.update { it.copy(errorMessage = "") }
             blockingQueue.clear()
             blockingQueue.put(ByteArray(0))//to stop the thread
             viewModelScope.launch(Dispatchers.IO) {
-                it.join()
+                job.join()
                 executeSafely {
                     socket?.close()
                     socket = null
                     outputStream = null
-                    _uiState.update { it.copy(connected = false, errorMessage = "") }
+                    _uiState.update { it.copy(connected = false) }
                 }
+                readerJob?.join()
             }.invokeOnCompletion { senderJob = null }
         }
 

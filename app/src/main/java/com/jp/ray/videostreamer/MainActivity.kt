@@ -66,11 +66,13 @@ class MainActivity : ComponentActivity() {
             val uiState by socketViewModel.uiState.collectAsState()
             VideoStreamerTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { padding ->
+                    /*
                     if (!uiState.connected) {
                         SocketUI(paddingValues = padding, socketViewModel = socketViewModel)
                     } else {
                         MainCamera(socketViewModel)
-                    }
+                    }*/
+                    RequestBluetoothEnable(paddingValues = padding)
                 }
             }
         }
