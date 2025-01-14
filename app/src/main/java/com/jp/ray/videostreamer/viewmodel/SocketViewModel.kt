@@ -1,34 +1,20 @@
-package com.jp.ray.videostreamer
+package com.jp.ray.videostreamer.viewmodel
 
-import android.Manifest
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Button
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.core.text.isDigitsOnly
+import android.app.Application
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import androidx.lifecycle.viewmodel.compose.viewModel
-import com.google.accompanist.permissions.ExperimentalPermissionsApi
-import com.google.accompanist.permissions.PermissionState
-import com.google.accompanist.permissions.isGranted
-import com.google.accompanist.permissions.rememberPermissionState
+import androidx.lifecycle.viewmodel.CreationExtras
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import com.jp.ray.videostreamer.modle.SocketUIState
+import com.jp.ray.videostreamer.repository.BluetoothRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import java.io.InputStream
 import java.io.OutputStream
@@ -36,65 +22,9 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.LinkedBlockingQueue
 
-@OptIn(ExperimentalPermissionsApi::class)
-@Composable
-fun SocketUI(paddingValues: PaddingValues, socketViewModel: SocketViewModel = viewModel()) {
-    val permissionState: PermissionState = rememberPermissionState(permission = Manifest.permission.INTERNET)
-
-    if(!permissionState.status.isGranted){
-        NoPermission(onRequestPermission = permissionState::launchPermissionRequest)
-        return
-    }
-
-    val uiState by socketViewModel.uiState.collectAsState()
-    Column(modifier = Modifier.padding(paddingValues)) {
-        TextFieldWithPlaceholder(
-            value = uiState.host,
-            onValueChange = socketViewModel::updateHost,
-            placeholder = "Host"
-        )
-        TextFieldWithPlaceholder(
-            value = uiState.port,
-            onValueChange = { if (it.isDigitsOnly()) socketViewModel.updatePort(it) },
-            placeholder = "Port",
-            keyboardType = KeyboardType.Number
-        )
-        Button(onClick = { socketViewModel.createSocket() }, enabled = !uiState.connected) {
-            Text(text = "Create Socket")
-        }
-        Button(onClick = { socketViewModel.closeSocket() }, enabled = uiState.connected) {
-            Text(text = "Close Socket")
-        }
-        if (uiState.errorMessage.isNotEmpty()) {
-            Text(text = "Error: ${uiState.errorMessage}", color = Color.Red)
-        }
-    }
-}
-
-@Composable
-fun TextFieldWithPlaceholder(
-    value: String,
-    onValueChange: (String) -> Unit,
-    placeholder: String,
-    keyboardType: KeyboardType = KeyboardType.Text
-) {
-    TextField(
-        value = value,
-        onValueChange = onValueChange,
-        placeholder = { Text(text = placeholder) },
-        keyboardOptions = KeyboardOptions(keyboardType = keyboardType)
-    )
-}
-
-
-data class SocketUIState(
-    val host: String = "",
-    val port: String = "1",
-    val errorMessage: String = "",
-    val connected: Boolean = false
-)
 
 class SocketViewModel : ViewModel() {
+
     private val _uiState = MutableStateFlow(SocketUIState())
     val uiState = _uiState.asStateFlow()
 
@@ -106,6 +36,7 @@ class SocketViewModel : ViewModel() {
     private var senderJob: Job? = null
 
     private var readerJob: Job? = null
+    var messageHandler:((Int)->Unit)? = null
 
     fun updateHost(host: String) {
         _uiState.update { it.copy(host = host) }
@@ -119,6 +50,7 @@ class SocketViewModel : ViewModel() {
     fun createSocket():Boolean {
         if (senderJob != null) return false
         viewModelScope.launch(Dispatchers.IO) {
+            blockingQueue.clear()
             executeSafely {
                 _uiState.update { it.copy(errorMessage = "") }
                 val host = _uiState.value.host
@@ -146,6 +78,10 @@ class SocketViewModel : ViewModel() {
                     if (item.isEmpty()) {
                         break
                     }
+                    println("remains:${blockingQueue.size}")
+                    blockingQueue.clear()//TODO 場合によってはemptyが消える
+
+
                     try {
                         outputStream!!.apply {
                             write(item)
@@ -153,6 +89,7 @@ class SocketViewModel : ViewModel() {
                         }
                     } catch (e: Exception) {
                         closeSocket()
+                        println("close in launch sender job")
                         break
                     }
 
@@ -165,7 +102,10 @@ class SocketViewModel : ViewModel() {
         return viewModelScope.launch(Dispatchers.IO) {
             executeSafely {
                 while (true) {
-                    inputStream!!.read()
+                    val value = inputStream!!.read()
+                    if (value != -1) {
+                        messageHandler?.let { it(value) }
+                    }
                 }
             }
         }
@@ -177,7 +117,7 @@ class SocketViewModel : ViewModel() {
 
     fun closeSocket() {
         senderJob?.let {
-            job->
+                job->
             _uiState.update { it.copy(errorMessage = "") }
             blockingQueue.clear()
             blockingQueue.put(ByteArray(0))//to stop the thread

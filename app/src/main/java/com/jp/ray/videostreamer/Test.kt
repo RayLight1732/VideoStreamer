@@ -17,6 +17,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresPermission
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
@@ -33,6 +34,7 @@ import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.PermissionState
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
+import com.jp.ray.videostreamer.ui.NoPermission
 import java.util.UUID
 
 
@@ -66,10 +68,10 @@ fun RequestBluetoothEnable(paddingValues: PaddingValues) {
     val permissionState2: PermissionState = rememberPermissionState(permission = Manifest.permission.BLUETOOTH_CONNECT)
 
     if(!permissionState.status.isGranted){
-        NoPermission(onRequestPermission = permissionState::launchPermissionRequest)
+        NoPermission(Modifier.fillMaxSize(),onRequestPermission = permissionState::launchPermissionRequest)
     }
     if (!permissionState2.status.isGranted) {
-        NoPermission(onRequestPermission = permissionState::launchPermissionRequest)
+        NoPermission(Modifier.fillMaxSize(),onRequestPermission = permissionState::launchPermissionRequest)
     }
     //bluetoothAdapter.bondedDevices.first().connectGatt(context,false,)
     bluetoothAdapter.bondedDevices.forEach {
@@ -91,6 +93,7 @@ private val bluetoothGattCallback = object : BluetoothGattCallback() {
             //successfully connected to the GATT server
             gatt?.discoverServices()
         } else {
+            
             //disconnected from the GATT server
         }
     }
