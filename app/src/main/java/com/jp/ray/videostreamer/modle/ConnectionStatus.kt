@@ -1,6 +1,6 @@
 package com.jp.ray.videostreamer.modle
 
-sealed class ConnectionStatus {
-    data object Connected:ConnectionStatus()
-    class Disconnected:ConnectionStatus()
+sealed class ConnectionStatus(val newState:Int) {
+    class Connected(newState: Int) : ConnectionStatus(newState)
+    class Disconnected(newState: Int):ConnectionStatus(newState)
 }

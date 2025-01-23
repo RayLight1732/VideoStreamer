@@ -22,7 +22,7 @@ import java.util.UUID
 //TODO インターフェースに分離
 //そもそもrepositoryという名前が正しいか検討
 class BluetoothRepository(private val context: Context) {
-    private val _connectionState = MutableStateFlow<ConnectionStatus>(ConnectionStatus.Disconnected())
+    private val _connectionState = MutableStateFlow<ConnectionStatus>(ConnectionStatus.Disconnected(255))
     val connectionState = _connectionState.asStateFlow()
     private val _discoveredState = MutableStateFlow(false)
     val discoveredState = _discoveredState.asStateFlow()
@@ -37,10 +37,10 @@ class BluetoothRepository(private val context: Context) {
             _connectionState.update {
                 println("update")
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
-                    ConnectionStatus.Connected
+                    ConnectionStatus.Connected(newState)
                 } else {
                     println("disconnected")
-                    ConnectionStatus.Disconnected()
+                    ConnectionStatus.Disconnected(newState)
                 }
             }
             gatt?.let {
@@ -104,7 +104,7 @@ class BluetoothRepository(private val context: Context) {
     @RequiresPermission(BLUETOOTH_CONNECT)
     fun write(serviceUUID: UUID, characteristicUUID: UUID, message: ByteArray) {
         val currentState = _connectionState.value
-        if (currentState != ConnectionStatus.Connected || !_discoveredState.value) {
+        if (currentState is ConnectionStatus.Connected || !_discoveredState.value) {
             throw IllegalStateException("Bluetooth is not connected or service is not discovered")
         }
         gatt?.also {
