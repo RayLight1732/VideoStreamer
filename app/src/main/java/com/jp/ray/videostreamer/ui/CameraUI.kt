@@ -147,20 +147,22 @@ private class TransportAnalyzer(private val socketViewModel: SocketViewModel) : 
     }
 
     override fun analyze(image: ImageProxy) {
-        val width = image.width
-        val height = image.height
+        //val width = image.width
+        //val height = image.height
 
         // ImageProxyをBitmapに変換
         val bitmap = image.toBitmap()
         image.close()
+        val resizedBitmap = Bitmap.createScaledBitmap(bitmap, 112, 112, true)
+
         // Bitmapをバイト配列に変換 (PNG形式で圧縮)
         val outputStream = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
+        resizedBitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
         outputStream.flush()
         val bitmapBytes = outputStream.toByteArray()
-
         // メッセージとして送信
-        val message = buildMessage(width, height, bitmapBytes)
+        val message = buildMessage(112,112, bitmapBytes)
+
         socketViewModel.sendMessage(message)
 
         // ImageProxyを閉じる
