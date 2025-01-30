@@ -31,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -78,17 +79,31 @@ fun Bluetooth(modifier: Modifier,viewmodel: BluetoothViewmodel) {
     } else {
 
         val connectionState by viewmodel.connectionUIStatus.collectAsState()
-        println("reflesh")
         if (connectionState is ConnectionUIStatus.Idle || connectionState is ConnectionUIStatus.Connecting || connectionState is ConnectionUIStatus.FailedToConnect || connectionState is ConnectionUIStatus.CancelConnecting) {
             val isConnecting = connectionState is ConnectionUIStatus.Connecting
             val isFailedToConnect = connectionState is ConnectionUIStatus.FailedToConnect
             val isCancellingToConnect = connectionState is ConnectionUIStatus.CancelConnecting
-            ConnectUI(modifier, viewmodel, isConnecting, isFailedToConnect, isCancellingToConnect, viewmodel::dismissFailedToConnect)
+            ConnectUI(
+                modifier,
+                viewmodel,
+                isConnecting,
+                isFailedToConnect,
+                isCancellingToConnect,
+                viewmodel::dismissFailedToConnect
+            )
         } else if (connectionState is ConnectionUIStatus.Connected || connectionState is ConnectionUIStatus.Disconnecting || connectionState is ConnectionUIStatus.DisconnectedByPair) {
             val isDisconnecting = connectionState is ConnectionUIStatus.Disconnecting
             val disconnectedByPair = connectionState is ConnectionUIStatus.DisconnectedByPair
-
-            AfterConnected(modifier, isDisconnecting,disconnectedByPair, viewmodel::write, viewmodel::disconnect, viewmodel::dismissDisconnectedByPair)
+            val voltage = viewmodel.voltage.collectAsState()
+            AfterConnected(
+                modifier,
+                isDisconnecting,
+                disconnectedByPair,
+                voltage.value,
+                viewmodel::write,
+                viewmodel::disconnect,
+                viewmodel::dismissDisconnectedByPair
+            )
         } else {
             Text(text = "Undefined", modifier = modifier)
         }
@@ -205,15 +220,13 @@ fun ConnectionFailDialog(message:String,close:()->Unit) {
 }
 
 @Composable
-fun AfterConnected(modifier: Modifier, isDisconnecting:Boolean,disconnectedByPair:Boolean, write:(message:ByteArray)->Unit, disconnect:()->Unit,reset:()->Unit) {
+fun AfterConnected(modifier: Modifier, isDisconnecting:Boolean,disconnectedByPair:Boolean, voltage: Float?,write:(message:ByteArray)->Unit, disconnect:()->Unit,reset:()->Unit) {
     Box(modifier = modifier) {
         Column(modifier = Modifier.fillMaxSize()) {
-            TextButton(onClick = {
-                val value = ByteArray(1)
-                value[0] = 1
-                write(value)
-            }) {
-                Text(text = "Send")
+            if (voltage == null) {
+                Text(text = "---")
+            } else {
+                Text(text = "測定電圧:${voltage}V")
             }
             TextButton(onClick = disconnect) {
                 Text(text = "Disconnect")

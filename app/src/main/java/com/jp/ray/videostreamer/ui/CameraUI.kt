@@ -166,7 +166,6 @@ private class TransportAnalyzer(private val socketViewModel: SocketViewModel) : 
         socketViewModel.sendMessage(message)
 
         // ImageProxyを閉じる
-        println("analyze")
     }
 
 

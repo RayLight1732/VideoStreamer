@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import java.util.UUID
+import java.util.function.Consumer
 
 //TODO インターフェースに分離
 //そもそもrepositoryという名前が正しいか検討
@@ -28,6 +29,7 @@ class BluetoothRepository(private val context: Context) {
     val discoveredState = _discoveredState.asStateFlow()
     private val bluetoothAdapter: BluetoothAdapter
     private var gatt: BluetoothGatt? = null
+    private val handlers = mutableMapOf<Pair<UUID,UUID>,(ByteArray)->Unit>()
 
     private val bluetoothGattCallback = object : BluetoothGattCallback() {
 
@@ -71,6 +73,29 @@ class BluetoothRepository(private val context: Context) {
                 _discoveredState.update { false }
             }
         }
+
+
+        override fun onCharacteristicRead(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            value: ByteArray,
+            status: Int
+        ) {
+            handlers[characteristic.service.uuid to characteristic.uuid]?.let {
+                it(value)
+            }
+        }
+
+        override fun onCharacteristicChanged(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            value: ByteArray
+        ) {
+            println("on characteristic changed")
+            handlers[characteristic.uuid to characteristic.uuid]?.let {
+                it(value)
+            }
+        }
     }
 
     init {
@@ -104,12 +129,15 @@ class BluetoothRepository(private val context: Context) {
     @RequiresPermission(BLUETOOTH_CONNECT)
     fun write(serviceUUID: UUID, characteristicUUID: UUID, message: ByteArray) {
         val currentState = _connectionState.value
-        if (currentState is ConnectionStatus.Connected || !_discoveredState.value) {
+        if (currentState !is ConnectionStatus.Connected || !_discoveredState.value) {
             throw IllegalStateException("Bluetooth is not connected or service is not discovered")
         }
         gatt?.also {
             val service =
                 it.getService(serviceUUID) ?: throw IllegalArgumentException("Service is not found")
+            service.characteristics.forEach{
+                println(it.uuid)
+            }
             val characteristic = service.getCharacteristic(characteristicUUID)
                 ?: throw IllegalArgumentException("Characteristic is not found")
             writeCharacteristic(it, characteristic, message)
@@ -149,5 +177,29 @@ class BluetoothRepository(private val context: Context) {
             )
         }.toSet()
     }
+
+    @RequiresPermission(BLUETOOTH_CONNECT)
+    fun updateCharacteristic(serviceUUID: UUID, characteristicUUID: UUID) {
+        val currentState = _connectionState.value
+        if (currentState !is ConnectionStatus.Connected || !_discoveredState.value) {
+            throw IllegalStateException("Bluetooth is not connected or service is not discovered")
+        }
+        gatt?.also {
+            val service =
+                it.getService(serviceUUID) ?: throw IllegalArgumentException("Service is not found")
+            val characteristic = service.getCharacteristic(characteristicUUID)
+                ?: throw IllegalArgumentException("Characteristic is not found")
+            it.readCharacteristic(characteristic)
+        } ?: throw IllegalStateException("Gatt server is null")
+    }
+
+    fun setCharacteristicHandler(serviceUUID: UUID, characteristicUUID: UUID,handler: (ByteArray)->Unit) {
+        handlers[serviceUUID to characteristicUUID] = handler
+    }
+
+    fun removeCharacteristicHandler(serviceUUID: UUID, characteristicUUID: UUID) {
+        handlers.remove(serviceUUID to characteristicUUID)
+    }
+
 }
 
